@@ -191,17 +191,19 @@ with paper_tab:
             st.caption("SATHEE organizes NEET year pages and subject question banks separately. The year page includes the subject sections; the subject bank covers multiple years.")
         else:
             subject_slug = "mathematics" if selected_subject == "Mathematics" else selected_subject.lower()
-            # SATHEE's year collections are available for recent years; its year index
-            # covers the broader 2009–2024 archive. Subject banks are organized separately.
-            if selected_year in (2023, 2024):
-                year_url = f"https://sathee.iitk.ac.in/jee-pyq/{selected_year}/"
+            # SATHEE's year archive is a year index; its subject chapter catalog is a
+            # separate page. Use these verified index pages instead of guessed year URLs.
+            year_url = "https://sathee.iitk.ac.in/pyq/jee/2009-2024/years/"
+            if selected_subject == "Mathematics":
+                # The public SATHEE chapter catalog has a Mathematics section, while
+                # the guessed /mathematics/ directory route returns a missing page.
+                subject_url = "https://sathee.iitk.ac.in/pyqs/jee/chapterwise/"
             else:
-                year_url = "https://sathee.iitk.ac.in/pyq/jee/2009-2024/years/"
-            subject_url = f"https://sathee.iitk.ac.in/pyqs/jee/chapterwise/{subject_slug}/"
+                subject_url = f"https://sathee.iitk.ac.in/pyqs/jee/chapterwise/{subject_slug}/"
             st.write(f"**Selected:** {selected_exam} · {selected_year} · {selected_subject}")
-            st.link_button(f"Open JEE year collection ({selected_year}) on SATHEE", year_url)
+            st.link_button(f"Open SATHEE JEE year index (choose {selected_year})", year_url)
             st.link_button(f"Open JEE {selected_subject} question bank", subject_url)
-            st.caption("SATHEE's JEE catalog lists year and subject resources. For older years, use the year index to select the paper.")
+            st.caption(f"On SATHEE, choose {selected_year} in the year index. Its subject bank is a separate resource; the Mathematics link opens the chapter catalog, which includes the Mathematics PYQs.")
         st.info("To turn a SATHEE paper into the interactive quiz with explanations, download its PDF and upload it in the **AI Question & Quiz Solver** tab.")
     else:
         st.info("SATHEE's linked past-question collection in this app currently covers NEET and JEE. Other exam resources are on SATHEE's [previous papers page](https://sathee.iitk.ac.in/previous-papers/).")
