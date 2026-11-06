@@ -1,0 +1,137 @@
+import streamlit as st
+import google.generativeai as genai
+import PyPDF2
+import os
+
+# Page Configuration
+st.set_page_config(
+    page_title="Entrance Exam Hub & AI Tutor",
+    page_icon="📚",
+    layout="wide"
+)
+
+# Sidebar Configuration for API Key & Owner Info
+st.sidebar.title("⚙️ Configuration")
+api_key = st.sidebar.text_input("Enter your Google Gemini API Key", type="password")
+
+if api_key:
+    genai.configure(api_key=api_key)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🏛️ Portal Ownership")
+st.sidebar.markdown("**Owner / Creator:** NilanjanC")
+
+# Main Title
+st.title("🎓 National Entrance Exam Hub & AI Solver")
+st.markdown("Welcome to the comprehensive preparation portal managed by **NilanjanC**. Access exam information, previous year resources, ask questions directly, or upload PDF question papers for instant, step-by-step AI explanations!")
+
+# Navigation Tabs
+tab1, tab2, tab3 = st.tabs(["📄 Question Papers Hub", "🤖 AI Question & PDF Solver", "❤️ Donate via Razorpay"])
+
+# TAB 1: Question Papers Hub
+with tab1:
+    st.header("Previous Year & Practice Question Papers Repository")
+    st.markdown("Select an entrance examination below to view its syllabus, exam pattern overview, and model practice papers.")
+
+    exams = {
+        "NEET (Medical)": "National Eligibility cum Entrance Test for undergraduate medical programs.",
+        "JEE Main (Engineering)": "Joint Entrance Examination for admission to NITs, IIITs, and Centrally Funded Technical Institutions.",
+        "JEE Advanced": "Gateway examination for admission into the prestigious Indian Institutes of Technology (IITs).",
+        "IAT - IISER Aptitude Test": "BS-MS dual degree entrance test for Indian Institutes of Science Education and Research.",
+        "NEST (National Entrance Screening Test)": "Compulsory exam for 5-year integrated M.Sc. program at NISER and UM-DAE CEBS.",
+        "CUET-UG": "Common University Entrance Test for admission to central and participating universities across India.",
+        "ICAR/AIEEA-UG": "Indian Council of Agricultural Research entrance exam for undergraduate agriculture and allied sciences.",
+        "BITSAT": "Birla Institute of Technology and Science Admission Test for B.E., B.Pharm, and M.Sc. programs."
+    }
+
+    selected_exam = st.selectbox("Choose an Examination:", list(exams.keys()))
+    st.info(f"**{selected_exam} Overview:** {exams[selected_exam]}")
+
+    st.markdown("### 📥 Sample Question Sets")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Section A: Core Subjects")
+        st.write(f"- {selected_exam} Practice Paper Set 1 (PDF)")
+        st.write(f"- {selected_exam} Practice Paper Set 2 (PDF)")
+    with col2:
+        st.subheader("Section B: Advanced Practice")
+        st.write(f"- {selected_exam} Mock Test Alpha (PDF)")
+        st.write(f"- {selected_exam} Mock Test Beta (PDF)")
+
+# TAB 2: AI Question & PDF Solver
+with tab2:
+    st.header("🤖 AI Question & PDF Solver")
+    st.markdown("Type any question or upload a question paper PDF to receive detailed conceptual explanations powered by Google Gemini.")
+
+    input_mode = st.radio("Choose Input Mode:", ["Type a Question", "Upload a PDF Document"])
+
+    user_query = ""
+    pdf_text = ""
+
+    if input_mode == "Type a Question":
+        user_query = st.text_area("Enter your question here:", placeholder="e.g., Explain the factors affecting chemical equilibrium according to Le Chatelier's principle.")
+    else:
+        uploaded_file = st.file_uploader("Upload Question PDF", type=["pdf"])
+        if uploaded_file is not None:
+            try:
+                reader = PyPDF2.PdfReader(uploaded_file)
+                for page in reader.pages:
+                    extracted = page.extract_text()
+                    if extracted:
+                        pdf_text += extracted + "\n"
+                st.success(f"Successfully read {len(reader.pages)} page(s) from the PDF document!")
+                with st.expander("Preview Extracted Text"):
+                    st.text(pdf_text[:2000] + ("..." if len(pdf_text) > 2000 else ""))
+            except Exception as e:
+                st.error(f"Error reading PDF: {e}")
+        
+        user_query = st.text_area("Specific instructions or questions to answer from the PDF:", placeholder="e.g., Solve all numerical problems from this paper step-by-step.")
+
+    if st.button("Generate Explanation"):
+        if not api_key:
+            st.warning("Please enter your Google Gemini API Key in the sidebar first.")
+        else:
+            prompt_content = ""
+            if input_mode == "Type a Question":
+                if not user_query.strip():
+                    st.warning("Please enter a valid question.")
+                else:
+                    prompt_content = f"Please provide a detailed, step-by-step explanation and solution for the following exam question:\n\n{user_query}"
+            else:
+                if not pdf_text.strip():
+                    st.warning("No readable text found in the uploaded PDF file.")
+                else:
+                    prompt_content = f"Here is text extracted from an entrance exam question paper. {user_query}\n\nDocument Content:\n{pdf_text[:10000]}"
+
+            if prompt_content:
+                with st.spinner("Analyzing and formulating step-by-step explanation..."):
+                    try:
+                        model = genai.GenerativeModel("gemini-1.5-flash")
+                        response = model.generate_content(prompt_content)
+                        st.markdown("### 💡 Detailed Answer & Explanation")
+                        st.markdown(response.text)
+                    except Exception as e:
+                        st.error(f"Error generating AI response: {e}")
+
+# TAB 3: Support & Donate (Razorpay)
+with tab3:
+    st.header("❤️ Support This Platform")
+    st.markdown("If this portal has helped your exam preparation, consider donating to support server maintenance and upkeep.")
+    st.markdown("**Initiative managed by NilanjanC**")
+
+    # Razorpay Payment Button integration HTML code snippet
+    # Replace 'pl_YOUR_RAZORPAY_BUTTON_ID' with the button ID generated from your Razorpay dashboard.
+    razorpay_html = """
+    <div style="text-align: center; padding: 25px; background-color: #f9f9f9; border-radius: 10px; border: 1px solid #e0e0e0;">
+        <p style="font-size: 16px; font-weight: 500; margin-bottom: 15px;">Contribute securely via Razorpay:</p>
+        <form>
+          <script src="https://checkout.razorpay.com/v1/payment-button.js" data-payment_button_id="pl_YOUR_RAZORPAY_BUTTON_ID" async> </script>
+        </form>
+        <p style="font-size: 11px; color: #666; margin-top: 15px;">(Note: Replace <code>pl_YOUR_RAZORPAY_BUTTON_ID</code> in <code>app.py</code> with your actual Razorpay Payment Button ID)</p>
+    </div>
+    """
+    st.components.v1.html(razorpay_html, height=220)
+
+# Footer
+st.markdown("---")
+st.markdown(f"<div style='text-align: center; color: gray;'>© 2026 Entrance Exam Hub | Built with Streamlit & Gemini API | Owner: <b>NilanjanC</b></div>", unsafe_allow_html=True)
