@@ -65,14 +65,12 @@ def extract_text(upload) -> str:
         raise ValueError("Please upload a PDF or Word (.docx) file.")
 
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    if not text:
-        raise ValueError(
-            "No selectable text was found. This may be a scanned image PDF; OCR support is not enabled yet."
-        )
+    if not text and suffix != "pdf":
+        raise ValueError("No text was found in this Word document.")
     return text[:MAX_TEXT_CHARS]
 
 
-def build_quiz(document_text: str, count: int, subject: str, key: str) -> list[dict]:
+def build_quiz(document_text: str, count: int, subject: str, key: str, pdf_bytes: bytes | None = None) -> list[dict]:
     client = genai.Client(api_key=key)
     prompt = f"""Create exactly {count} quiz questions based only on the supplied exam paper.
 Subject/exam context: {subject or 'Infer from the paper'}.
@@ -83,9 +81,13 @@ Do not invent facts from the paper. If the document has fewer than {count} usabl
 Exam paper text:
 {document_text}
 """
+    contents = [prompt]
+    if pdf_bytes:
+        # Gemini can read a PDF visually, including scanned pages and diagrams.
+        contents.insert(0, types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"))
     response = client.models.generate_content(
         model=MODEL,
-        contents=prompt,
+        contents=contents,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             temperature=0.2,
@@ -106,7 +108,11 @@ Exam paper text:
         ):
             valid.append(q)
     if not valid:
-        raise ValueError("The AI did not return usable quiz questions. Try another file or fewer questions.")
+        returned_count = len(questions) if isinstance(questions, list) else 0
+        raise ValueError(
+            f"The AI returned {returned_count} question(s), but none matched the required quiz format. "
+            "Try again, or use a clearer paper with visible question text."
+        )
     return valid
 
 
@@ -144,20 +150,27 @@ with solver_tab:
     if uploaded_file:
         try:
             extracted = extract_text(uploaded_file)
-            st.success(f"Read **{len(extracted):,} characters** from `{uploaded_file.name}`.")
-            with st.expander("Preview extracted text"):
-                st.text(extracted[:2_000] + (" …" if len(extracted) > 2_000 else ""))
+            if extracted:
+                st.success(f"Read **{len(extracted):,} characters** from `{uploaded_file.name}`.")
+                with st.expander("Preview extracted text"):
+                    st.text(extracted[:2_000] + (" …" if len(extracted) > 2_000 else ""))
+            else:
+                st.info("No selectable text was extracted. Gemini will try to read the PDF pages as images.")
         except Exception as exc:
             st.error(f"Could not read this file: {exc}")
 
-    if st.button("Create my quiz", type="primary", disabled=not extracted, use_container_width=True):
+    if st.button("Create my quiz", type="primary", disabled=uploaded_file is None, use_container_width=True):
+        # Remove results from an earlier paper before attempting this one.
+        for key in ["exam_quiz", "exam_answers", "exam_submitted", "exam_source_name"]:
+            st.session_state.pop(key, None)
         if not api_key.strip():
             st.warning("Add your Gemini API key in the sidebar, or configure GEMINI_API_KEY in Streamlit Secrets.")
         else:
             try:
                 with st.spinner("Reading the paper and preparing your quiz…"):
+                    pdf_bytes = uploaded_file.getvalue() if uploaded_file.name.lower().endswith(".pdf") else None
                     st.session_state.exam_quiz = build_quiz(
-                        extracted, question_count, subject.strip(), api_key.strip()
+                        extracted, question_count, subject.strip(), api_key.strip(), pdf_bytes
                     )
                 st.session_state.exam_answers = {}
                 st.session_state.exam_submitted = set()
