@@ -158,8 +158,54 @@ with paper_tab:
     }
     selected_exam = st.selectbox("Choose an examination", list(exams))
     st.info(f"**{selected_exam}:** {exams[selected_exam]}")
-    st.markdown("Use the **AI Question & Quiz Solver** tab to upload your own paper.")
-    st.caption("Sample paper download links can be added here when verified source URLs are available.")
+    st.markdown("### Find past questions on SATHEE")
+    st.caption("Choose an exam, year, and subject. The buttons open question resources hosted by SATHEE, IIT Kanpur.")
+
+    is_neet = selected_exam.startswith("NEET")
+    is_jee = selected_exam.startswith("JEE")
+    if is_neet or is_jee:
+        subject_options = (
+            ["Physics", "Chemistry", "Botany", "Zoology"]
+            if is_neet
+            else ["Physics", "Chemistry", "Mathematics"]
+        )
+        year_options = list(range(2024, 2008, -1))
+        filter_col1, filter_col2 = st.columns(2)
+        with filter_col1:
+            selected_year = st.selectbox("Year", year_options, key="sathee_year")
+        with filter_col2:
+            selected_subject = st.selectbox("Subject", subject_options, key="sathee_subject")
+
+        if is_neet:
+            year_url = f"https://sathee.iitk.ac.in/pyqs/neet/database/year/{selected_year}/"
+            neet_subject_paths = {
+                "Physics": "physics/",
+                "Chemistry": "chemistry/",
+                "Botany": "biology/botany/",
+                "Zoology": "biology/zoology/",
+            }
+            subject_url = f"https://sathee.iitk.ac.in/pyqs/neet/chapterwise/{neet_subject_paths[selected_subject]}"
+            st.write(f"**Selected:** NEET · {selected_year} · {selected_subject}")
+            st.link_button(f"Open NEET {selected_year} questions on SATHEE", year_url)
+            st.link_button(f"Open NEET {selected_subject} question bank", subject_url)
+            st.caption("SATHEE organizes NEET year pages and subject question banks separately. The year page includes the subject sections; the subject bank covers multiple years.")
+        else:
+            subject_slug = "mathematics" if selected_subject == "Mathematics" else selected_subject.lower()
+            # SATHEE's year collections are available for recent years; its year index
+            # covers the broader 2009–2024 archive. Subject banks are organized separately.
+            if selected_year in (2023, 2024):
+                year_url = f"https://sathee.iitk.ac.in/jee-pyq/{selected_year}/"
+            else:
+                year_url = "https://sathee.iitk.ac.in/pyq/jee/2009-2024/years/"
+            subject_url = f"https://sathee.iitk.ac.in/pyqs/jee/chapterwise/{subject_slug}/"
+            st.write(f"**Selected:** {selected_exam} · {selected_year} · {selected_subject}")
+            st.link_button(f"Open JEE year collection ({selected_year}) on SATHEE", year_url)
+            st.link_button(f"Open JEE {selected_subject} question bank", subject_url)
+            st.caption("SATHEE's JEE catalog lists year and subject resources. For older years, use the year index to select the paper.")
+        st.info("To turn a SATHEE paper into the interactive quiz with explanations, download its PDF and upload it in the **AI Question & Quiz Solver** tab.")
+    else:
+        st.info("SATHEE's linked past-question collection in this app currently covers NEET and JEE. Other exam resources are on SATHEE's [previous papers page](https://sathee.iitk.ac.in/previous-papers/).")
+        st.link_button("Browse SATHEE previous papers", "https://sathee.iitk.ac.in/previous-papers/")
 
 with solver_tab:
     st.header("Turn a question paper into a quiz")
