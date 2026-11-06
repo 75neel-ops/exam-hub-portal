@@ -70,6 +70,30 @@ def extract_text(upload) -> str:
     return text[:MAX_TEXT_CHARS]
 
 
+def parse_model_json(raw_text: str) -> dict:
+    """Read the first complete JSON value even if the model adds trailing text."""
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```\s*$", "", text)
+
+    decoder = json.JSONDecoder()
+    starts = [position for position, char in enumerate(text) if char in "{["]
+    for start in starts:
+        try:
+            parsed, _end = decoder.raw_decode(text, start)
+            if isinstance(parsed, list):
+                return {"questions": parsed}
+            if isinstance(parsed, dict):
+                if isinstance(parsed.get("questions"), list):
+                    return parsed
+                if "question" in parsed:
+                    return {"questions": [parsed]}
+        except json.JSONDecodeError:
+            continue
+    raise ValueError("Gemini's response did not contain a complete JSON quiz. Please try again.")
+
+
 def build_quiz(document_text: str, count: int, subject: str, key: str, pdf_bytes: bytes | None = None) -> list[dict]:
     client = genai.Client(api_key=key)
     prompt = f"""Create exactly {count} quiz questions based only on the supplied exam paper.
@@ -94,7 +118,7 @@ Exam paper text:
             max_output_tokens=8192,
         ),
     )
-    data = json.loads(response.text or "{}")
+    data = parse_model_json(response.text or "")
     questions = data.get("questions", [])
     valid = []
     for q in questions:
