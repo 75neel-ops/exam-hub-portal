@@ -1,137 +1,212 @@
-import streamlit as st
-import google.generativeai as genai
-import PyPDF2
-import os
+from __future__ import annotations
 
-# Page Configuration
+import json
+import os
+import re
+from io import BytesIO
+
+import streamlit as st
+from google import genai
+from google.genai import types
+from pypdf import PdfReader
+from docx import Document
+
+
+MODEL = "gemini-3.5-flash"
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+MAX_TEXT_CHARS = 30_000
+
 st.set_page_config(
     page_title="Entrance Exam Hub & AI Tutor",
     page_icon="📚",
-    layout="wide"
+    layout="wide",
 )
 
-# Sidebar Configuration for API Key & Owner Info
-st.sidebar.title("⚙️ Configuration")
-api_key = st.sidebar.text_input("Enter your Google Gemini API Key", type="password")
+st.title("🎓 Entrance Exam Hub & AI Tutor")
+st.caption("Upload a question paper and turn its questions into an interactive quiz with worked explanations.")
 
-if api_key:
-    genai.configure(api_key=api_key)
+with st.sidebar:
+    st.title("⚙️ Configuration")
+    try:
+        secret_key = st.secrets.get("GEMINI_API_KEY", "")
+    except Exception:
+        secret_key = ""
+    api_key = st.text_input(
+        "Google Gemini API key",
+        value=secret_key,
+        type="password",
+        help="For Streamlit Cloud, set GEMINI_API_KEY under app Settings → Secrets.",
+    )
+    st.markdown("---")
+    st.markdown("### 🏛️ Portal Ownership")
+    st.markdown("**Owner / Creator:** NilanjanC")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🏛️ Portal Ownership")
-st.sidebar.markdown("**Owner / Creator:** NilanjanC")
 
-# Main Title
-st.title("🎓 National Entrance Exam Hub & AI Solver")
-st.markdown("Welcome to the comprehensive preparation portal managed by **NilanjanC**. Access exam information, previous year resources, ask questions directly, or upload PDF question papers for instant, step-by-step AI explanations!")
+def extract_text(upload) -> str:
+    """Extract text from supported, text-based PDF and Word documents."""
+    payload = upload.getvalue()
+    if len(payload) > MAX_UPLOAD_BYTES:
+        raise ValueError("The file is over 15 MB. Please upload a smaller paper.")
 
-# Navigation Tabs
-tab1, tab2, tab3 = st.tabs(["📄 Question Papers Hub", "🤖 AI Question & PDF Solver", "❤️ Donate via Razorpay"])
+    suffix = upload.name.lower().rsplit(".", 1)[-1]
+    if suffix == "pdf":
+        reader = PdfReader(BytesIO(payload))
+        chunks = []
+        for page in reader.pages:
+            chunks.append(page.extract_text() or "")
+        text = "\n".join(chunks)
+    elif suffix == "docx":
+        document = Document(BytesIO(payload))
+        text = "\n".join(p.text for p in document.paragraphs)
+        for table in document.tables:
+            for row in table.rows:
+                text += "\n" + " | ".join(cell.text for cell in row.cells)
+    else:
+        raise ValueError("Please upload a PDF or Word (.docx) file.")
 
-# TAB 1: Question Papers Hub
-with tab1:
-    st.header("Previous Year & Practice Question Papers Repository")
-    st.markdown("Select an entrance examination below to view its syllabus, exam pattern overview, and model practice papers.")
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if not text:
+        raise ValueError(
+            "No selectable text was found. This may be a scanned image PDF; OCR support is not enabled yet."
+        )
+    return text[:MAX_TEXT_CHARS]
 
+
+def build_quiz(document_text: str, count: int, subject: str, key: str) -> list[dict]:
+    client = genai.Client(api_key=key)
+    prompt = f"""Create exactly {count} quiz questions based only on the supplied exam paper.
+Subject/exam context: {subject or 'Infer from the paper'}.
+For each item, preserve the meaning of an original question where possible. Turn it into a clear multiple-choice question with exactly 4 plausible options. Give one correct option, a concise step-by-step explanation, and the source question number if visible (otherwise an empty string).
+Do not invent facts from the paper. If the document has fewer than {count} usable questions, return only the usable ones. Return valid JSON with this shape:
+{{"questions":[{{"question":"...","options":["...","...","...","..."],"answer":"exact option text","explanation":"...","source_number":"..."}}]}}
+
+Exam paper text:
+{document_text}
+"""
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.2,
+            max_output_tokens=8192,
+        ),
+    )
+    data = json.loads(response.text or "{}")
+    questions = data.get("questions", [])
+    valid = []
+    for q in questions:
+        options = q.get("options", [])
+        answer = q.get("answer", "")
+        if (
+            isinstance(q.get("question"), str)
+            and len(options) == 4
+            and answer in options
+            and isinstance(q.get("explanation"), str)
+        ):
+            valid.append(q)
+    if not valid:
+        raise ValueError("The AI did not return usable quiz questions. Try another file or fewer questions.")
+    return valid
+
+
+paper_tab, solver_tab, support_tab = st.tabs(
+    ["📄 Question Papers Hub", "🤖 AI Question & Quiz Solver", "❤️ Support"]
+)
+
+with paper_tab:
+    st.header("Exam practice")
     exams = {
         "NEET (Medical)": "National Eligibility cum Entrance Test for undergraduate medical programs.",
-        "JEE Main (Engineering)": "Joint Entrance Examination for admission to NITs, IIITs, and Centrally Funded Technical Institutions.",
-        "JEE Advanced": "Gateway examination for admission into the prestigious Indian Institutes of Technology (IITs).",
-        "IAT - IISER Aptitude Test": "BS-MS dual degree entrance test for Indian Institutes of Science Education and Research.",
-        "NEST (National Entrance Screening Test)": "Compulsory exam for 5-year integrated M.Sc. program at NISER and UM-DAE CEBS.",
-        "CUET-UG": "Common University Entrance Test for admission to central and participating universities across India.",
-        "ICAR/AIEEA-UG": "Indian Council of Agricultural Research entrance exam for undergraduate agriculture and allied sciences.",
-        "BITSAT": "Birla Institute of Technology and Science Admission Test for B.E., B.Pharm, and M.Sc. programs."
+        "JEE Main (Engineering)": "Joint Entrance Examination for admission to NITs, IIITs, and other participating institutes.",
+        "JEE Advanced": "Entrance examination for admission to the Indian Institutes of Technology.",
+        "IAT - IISER Aptitude Test": "Entrance test for undergraduate science programmes at IISERs.",
+        "NEST": "Entrance test for the integrated MSc programmes at NISER and UM-DAE CEBS.",
+        "CUET-UG": "Common University Entrance Test for participating universities.",
+        "ICAR/AIEEA-UG": "Entrance pathway for undergraduate agriculture programmes.",
+        "BITSAT": "Birla Institute of Technology and Science Admission Test.",
     }
+    selected_exam = st.selectbox("Choose an examination", list(exams))
+    st.info(f"**{selected_exam}:** {exams[selected_exam]}")
+    st.markdown("Use the **AI Question & Quiz Solver** tab to upload your own paper.")
+    st.caption("Sample paper download links can be added here when verified source URLs are available.")
 
-    selected_exam = st.selectbox("Choose an Examination:", list(exams.keys()))
-    st.info(f"**{selected_exam} Overview:** {exams[selected_exam]}")
+with solver_tab:
+    st.header("Turn a question paper into a quiz")
+    st.write("Upload a text-based PDF or Word document. The app extracts its questions and prepares answer explanations.")
+    uploaded_file = st.file_uploader(
+        "Question paper", type=["pdf", "docx"], help="Maximum 15 MB. Scanned image-only PDFs need OCR and are not supported yet."
+    )
+    subject = st.text_input("Subject or exam (optional)", placeholder="e.g. NEET Chemistry")
+    question_count = st.slider("Questions to include", min_value=1, max_value=20, value=10)
 
-    st.markdown("### 📥 Sample Question Sets")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Section A: Core Subjects")
-        st.write(f"- {selected_exam} Practice Paper Set 1 (PDF)")
-        st.write(f"- {selected_exam} Practice Paper Set 2 (PDF)")
-    with col2:
-        st.subheader("Section B: Advanced Practice")
-        st.write(f"- {selected_exam} Mock Test Alpha (PDF)")
-        st.write(f"- {selected_exam} Mock Test Beta (PDF)")
+    extracted = ""
+    if uploaded_file:
+        try:
+            extracted = extract_text(uploaded_file)
+            st.success(f"Read **{len(extracted):,} characters** from `{uploaded_file.name}`.")
+            with st.expander("Preview extracted text"):
+                st.text(extracted[:2_000] + (" …" if len(extracted) > 2_000 else ""))
+        except Exception as exc:
+            st.error(f"Could not read this file: {exc}")
 
-# TAB 2: AI Question & PDF Solver
-with tab2:
-    st.header("🤖 AI Question & PDF Solver")
-    st.markdown("Type any question or upload a question paper PDF to receive detailed conceptual explanations powered by Google Gemini.")
-
-    input_mode = st.radio("Choose Input Mode:", ["Type a Question", "Upload a PDF Document"])
-
-    user_query = ""
-    pdf_text = ""
-
-    if input_mode == "Type a Question":
-        user_query = st.text_area("Enter your question here:", placeholder="e.g., Explain the factors affecting chemical equilibrium according to Le Chatelier's principle.")
-    else:
-        uploaded_file = st.file_uploader("Upload Question PDF", type=["pdf"])
-        if uploaded_file is not None:
-            try:
-                reader = PyPDF2.PdfReader(uploaded_file)
-                for page in reader.pages:
-                    extracted = page.extract_text()
-                    if extracted:
-                        pdf_text += extracted + "\n"
-                st.success(f"Successfully read {len(reader.pages)} page(s) from the PDF document!")
-                with st.expander("Preview Extracted Text"):
-                    st.text(pdf_text[:2000] + ("..." if len(pdf_text) > 2000 else ""))
-            except Exception as e:
-                st.error(f"Error reading PDF: {e}")
-        
-        user_query = st.text_area("Specific instructions or questions to answer from the PDF:", placeholder="e.g., Solve all numerical problems from this paper step-by-step.")
-
-    if st.button("Generate Explanation"):
-        if not api_key:
-            st.warning("Please enter your Google Gemini API Key in the sidebar first.")
+    if st.button("Create my quiz", type="primary", disabled=not extracted, use_container_width=True):
+        if not api_key.strip():
+            st.warning("Add your Gemini API key in the sidebar, or configure GEMINI_API_KEY in Streamlit Secrets.")
         else:
-            prompt_content = ""
-            if input_mode == "Type a Question":
-                if not user_query.strip():
-                    st.warning("Please enter a valid question.")
-                else:
-                    prompt_content = f"Please provide a detailed, step-by-step explanation and solution for the following exam question:\n\n{user_query}"
-            else:
-                if not pdf_text.strip():
-                    st.warning("No readable text found in the uploaded PDF file.")
-                else:
-                    prompt_content = f"Here is text extracted from an entrance exam question paper. {user_query}\n\nDocument Content:\n{pdf_text[:10000]}"
+            try:
+                with st.spinner("Reading the paper and preparing your quiz…"):
+                    st.session_state.exam_quiz = build_quiz(
+                        extracted, question_count, subject.strip(), api_key.strip()
+                    )
+                st.session_state.exam_answers = {}
+                st.session_state.exam_submitted = set()
+                st.session_state.exam_source_name = uploaded_file.name
+            except Exception as exc:
+                st.error(f"Quiz generation failed: {exc}")
 
-            if prompt_content:
-                with st.spinner("Analyzing and formulating step-by-step explanation..."):
-                    try:
-                        model = genai.GenerativeModel("gemini-1.5-flash")
-                        response = model.generate_content(prompt_content)
-                        st.markdown("### 💡 Detailed Answer & Explanation")
-                        st.markdown(response.text)
-                    except Exception as e:
-                        st.error(f"Error generating AI response: {e}")
+    quiz = st.session_state.get("exam_quiz", [])
+    if quiz:
+        st.divider()
+        st.subheader(f"Your quiz · {st.session_state.get('exam_source_name', 'Question paper')}")
+        for index, item in enumerate(quiz):
+            label = f"Question {index + 1}"
+            if item.get("source_number"):
+                label += f" · Paper question {item['source_number']}"
+            with st.container(border=True):
+                st.markdown(f"**{label}**")
+                st.markdown(item["question"])
+                selected = st.radio(
+                    "Choose one answer",
+                    item["options"],
+                    key=f"exam_answer_{index}",
+                    index=None,
+                    label_visibility="collapsed",
+                )
+                if st.button("Check answer", key=f"exam_check_{index}", disabled=selected is None):
+                    st.session_state.exam_answers[index] = selected
+                    st.session_state.exam_submitted.add(index)
+                if index in st.session_state.get("exam_submitted", set()):
+                    chosen = st.session_state.exam_answers[index]
+                    if chosen == item["answer"]:
+                        st.success("Correct!")
+                    else:
+                        st.error(f"Not quite. Correct answer: {item['answer']}")
+                    st.info(f"**Explanation:** {item['explanation']}")
 
-# TAB 3: Support & Donate (Razorpay)
-with tab3:
-    st.header("❤️ Support This Platform")
-    st.markdown("If this portal has helped your exam preparation, consider donating to support server maintenance and upkeep.")
-    st.markdown("**Initiative managed by NilanjanC**")
+        answered = st.session_state.get("exam_submitted", set())
+        if answered:
+            score = sum(st.session_state.exam_answers[i] == quiz[i]["answer"] for i in answered)
+            st.metric("Score so far", f"{score} / {len(answered)}")
+        if st.button("Start over"):
+            for key in ["exam_quiz", "exam_answers", "exam_submitted", "exam_source_name"]:
+                st.session_state.pop(key, None)
+            st.rerun()
 
-    # Razorpay Payment Button integration HTML code snippet
-    # Replace 'pl_YOUR_RAZORPAY_BUTTON_ID' with the button ID generated from your Razorpay dashboard.
-    razorpay_html = """
-    <div style="text-align: center; padding: 25px; background-color: #f9f9f9; border-radius: 10px; border: 1px solid #e0e0e0;">
-        <p style="font-size: 16px; font-weight: 500; margin-bottom: 15px;">Contribute securely via Razorpay:</p>
-        <form>
-          <script src="https://checkout.razorpay.com/v1/payment-button.js" data-payment_button_id="pl_YOUR_RAZORPAY_BUTTON_ID" async> </script>
-        </form>
-        <p style="font-size: 11px; color: #666; margin-top: 15px;">(Note: Replace <code>pl_YOUR_RAZORPAY_BUTTON_ID</code> in <code>app.py</code> with your actual Razorpay Payment Button ID)</p>
-    </div>
-    """
-    st.components.v1.html(razorpay_html, height=220)
+with support_tab:
+    st.header("Support this platform")
+    st.write("A payment button can be added here after you create one in Razorpay.")
+    st.caption("The original file contained a placeholder payment-button ID, so it could not accept donations as written.")
 
-# Footer
-st.markdown("---")
-st.markdown(f"<div style='text-align: center; color: gray;'>© 2026 Entrance Exam Hub | Built with Streamlit & Gemini API | Owner: <b>NilanjanC</b></div>", unsafe_allow_html=True)
+st.divider()
+st.caption("© 2026 Entrance Exam Hub · Built with Streamlit and Gemini · Owner: NilanjanC")
